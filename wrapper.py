@@ -23,10 +23,11 @@ def _worker(exclusive_queue, shared_queue, env_fn_wrapper):
             ob, reward, done, info = env.step(data)
             if done:
                 ob = env.reset()
+            info['pid'] = pid
             shared_queue.put(((ob, reward, done, info), pid))
         elif cmd == 'reset':
             ob = env.reset()
-            shared_queue.put(((ob, 0, False, {}), pid))
+            shared_queue.put(((ob, 0, False, {'pid': pid}), pid))
         elif cmd == 'close':
             exclusive_queue.close()
             break
@@ -73,7 +74,7 @@ class SubprocVecEnv(object):
             p.daemon = True
             p.start()
 
-        self.env_queues[0].put(('get_spaces', None))
+        env_queues[0].put(('get_spaces', None))
         observation_space, action_space = self.shared_queue.get()
         self.observation_space = observation_space
         self.action_space = action_space
@@ -135,3 +136,33 @@ class SubprocVecEnv(object):
     def step(self, actions):
         self._step_async(actions)
         return self._step_wait()
+
+
+def subprocvec_unit_test():
+    """Unit test"""
+    import random
+    from collections import defaultdict
+    from functools import partial
+    import gym
+
+    nenvs = 10
+    menvs = 5
+    env_fns = [partial(gym.make, 'CartPole-v0') for _ in range(nenvs)]
+    env = SubprocVecEnv(env_fns, menvs)
+    o = env.reset()
+    count = defaultdict(int)
+    for _ in range(1000):
+        assert o.shape == (menvs, 4)
+        a = [random.choice([0, 1]) for _ in range(menvs)]
+        o_, r, d, infos = env.step(a)
+        assert r.shape == (menvs, ) and d.shape == (menvs, )
+        for info in infos:
+            count[info['pid']] += 1
+        o = o_
+    assert len(count) == nenvs
+    for pid, c in count.items():
+        print('Pid {} runs {} times'.format(pid, c))
+
+
+if __name__ == '__main__':
+    subprocvec_unit_test()
